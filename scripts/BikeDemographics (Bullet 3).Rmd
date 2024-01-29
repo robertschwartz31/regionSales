@@ -1,0 +1,288 @@
+---
+title: "Bike Demographics"
+output: pdf_document
+---
+
+```{r setup, include=FALSE, message = FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+options(tinytex.verbose = TRUE)
+
+### Install the following packages, if not currently installed
+# install.packages("dplyr")
+# install.packages('stringr')
+# install.packages("ggplot2")
+# install.packages('flextable')
+# install.packages("officer")
+# install.packages("openxlsx")
+# install.packages("formattable")
+# install.packages("rmarkdown")
+# install.packages('stringr')
+
+### Loads Relevant packages
+library(dplyr)
+library(ggplot2)
+library(formattable)
+library(rmarkdown)
+library(gridExtra)
+library(stringr)
+
+### Essentially, working directory sits in the script folder. All data sits in adjacent folder 
+### and the desired directory needs to be set to the data folder as a result
+base_dir <- gsub('scripts$', 'data', getwd())
+
+### Reads date data and extracts used date columns
+date <- read.csv(paste0(base_dir, '/Date.csv'), stringsAsFactors = F)
+date <- date %>% select(DateKey, MonthNumberOfYear, CalendarYear)
+  
+### Reads sales data and selects used columns
+factInternetSales <- read.csv(paste0(base_dir, '/FactInternetSales.csv'), stringsAsFactors = F)
+factInternetSales <- factInternetSales %>% select(ProductKey,SalesTerritoryKey, SalesAmount, OrderDateKey, CustomerKey)
+
+### Reads Product data set, selects used columns
+product <- read.csv(paste0(base_dir, '/Product.csv'), stringsAsFactors = F)
+product <- product %>% select(ProductKey, ProductSubcategoryKey)
+
+### Reads Product Category data set, selects used columns
+productCategory <- read.csv(paste0(base_dir, '/ProductCategory.csv'), stringsAsFactors = F)
+productCategory <- productCategory %>% select(ProductCategoryKey, EnglishProductCategoryName)
+
+### Reads Product Sub Category data set, selects used columns
+productSubCategory <- read.csv(paste0(base_dir, '/ProductSubcategory.csv'), stringsAsFactors = F)
+productSubCategory <- productSubCategory %>% select(ProductSubcategoryKey, ProductCategoryKey, EnglishProductSubcategoryName)
+
+### Gets the association between primary category and subCategory, so we can filter out 'Bikes' from
+### the subCategory Selects
+categorySubcategory <- left_join(productCategory, productSubCategory, by = 'ProductCategoryKey') %>% 
+  select(ProductCategoryKey, EnglishProductCategoryName, ProductSubcategoryKey, EnglishProductSubcategoryName)
+
+### Joins sales by date data for easier filtering
+salesDate <- left_join(factInternetSales, date, by = c('OrderDateKey' = 'DateKey'))
+
+### Combines sales with product, product category, and product sub category.
+### necessary to be able to isolate 'bike' related transactions
+bikeDemo <- salesDate %>% left_join(product, by = 'ProductKey')
+bikeDemo <- bikeDemo %>% left_join(categorySubcategory, by = 'ProductSubcategoryKey')
+
+### Reads customer data. notably reads in most of the strings as factors
+customer <- read.csv(paste0(base_dir, '/Customer.csv'))
+
+### Combines product with customer sale demographics, then
+### filters information to 'Bikes' purchases only,There are a lot of modified
+### columns that are resultant of the selected demographics, but ultimately, 
+### Most of this is performed for easier calculations and / or plotting
+bikeDemo <- bikeDemo %>% left_join(customer, by = 'CustomerKey') %>%
+  filter(EnglishProductCategoryName == 'Bikes') %>%
+  select(BirthDate, MaritalStatus, Gender, YearlyIncome,
+         TotalChildren, NumberChildrenAtHome, EnglishEducation,
+         EnglishOccupation, HouseOwnerFlag, NumberCarsOwned,
+         CommuteDistance, CustomerKey) %>%
+  mutate(BirthDate = as.Date(BirthDate)) %>%
+  mutate(Age = as.numeric(floor((as.Date('2008-07-15') - BirthDate) / 365))) %>%
+  select(-BirthDate) %>% 
+  mutate(NumberCarsOwned = factor(NumberCarsOwned)) %>%
+  mutate(HomeOwner = HouseOwnerFlag) %>%
+  mutate(NumberChildrenAtHome = factor(NumberChildrenAtHome)) %>%
+  mutate(TotalChildren = factor(TotalChildren)) %>%
+  mutate(Parent = ifelse(TotalChildren == 0, 0, 1)) %>% 
+  mutate(IsParent = factor(ifelse(TotalChildren == 0, 'No', 'Yes'))) %>% 
+  mutate(ChildAtHome = ifelse(NumberChildrenAtHome == 0, 0, 1)) %>% 
+  mutate(HasCar = ifelse(NumberCarsOwned == 0, 0, 1)) %>% 
+  mutate(CarOwner = factor(ifelse(NumberCarsOwned == 0, 'No', 'Yes'))) %>% 
+  mutate(ShortTravel = ifelse(grepl('10', CommuteDistance), 0, 1)) %>% 
+  mutate(ShortCommute = factor(ifelse(grepl('10', CommuteDistance), 'No', 'Yes'))) %>% 
+  mutate(EnglishEducation = factor(EnglishEducation, levels = c('Partial High School',
+                                                                'High School',
+                                                                'Partial College', 
+                                                                'Bachelors',
+                                                                'Graduate Degree'))) %>% 
+  mutate(CommuteDistance = factor(CommuteDistance, levels = c('0-1 Miles',
+                                                              '1-2 Miles',
+                                                              '2-5 Miles',
+                                                              '5-10 Miles',
+                                                              '10+ Miles'))) %>%
+  mutate(EnglishOccupation = factor(EnglishOccupation, levels = c('Manual', 
+                                                                  'Clerical',
+                                                                  'Skilled Manual',
+                                                                  'Professional', 
+                                                                  'Management'))) %>% 
+  mutate(MaritalStatus = factor(ifelse(MaritalStatus == 'M', 'Married', 'Single'), levels = c('Married', 'Single'))) %>% 
+  mutate(Gender = factor(ifelse(Gender == 'M', 'Male', 'Female'), levels = c('Female', 'Male'))) %>% 
+  mutate(HouseOwnerFlag = factor(ifelse(HouseOwnerFlag == 1, 'Home Owner', 'Non-Home Owner'), levels = c('Non-Home Owner', 'Home Owner')))
+
+### Functions for formatting labels of plot objects
+countFormatLabel <- function(x) paste0(comma(x, digits = 0))
+costFormatLabel <- function(x) paste0('$', comma(x, digits = 0))
+
+### R doesn't have a native function for statistical mode, so this 
+### is a custom helper
+statisticalMode <- function(vector) {
+  
+  ### Finds the unique elements of a vector
+  uniqueElements <- unique(vector)
+  
+  ### Returns value(s) with the greatest frequency
+  uniqueElements[which.max(tabulate(match(vector, uniqueElements)))]
+  
+}
+
+### Helper function for base Histogram. Allows for custom 
+### breaks and labeling. Fixes color for consistency
+makeFormatHistogram <- function(data, demo, breaks, label) {
+  
+  ggplot(data = data, aes_string(x = demo, color = demo)) +
+  geom_histogram(bins = breaks, fill = '#F8766D', color = 'black') +
+  xlab(label) +
+  ylab('Number of Customers') +
+  scale_y_continuous(labels = countFormatLabel) 
+  
+}
+
+### Helper function for base Bar Plot. Allows for
+### The demo select and the legend title
+makeFormatBar <- function(data, demo, legend) {
+  
+  ggplot(data = data, aes_string(x = demo,
+                                     fill = demo)) +
+  geom_bar() +
+  xlab(legend) +
+  ylab('Count') +
+  scale_y_continuous(labels = countFormatLabel) +
+  scale_x_discrete(labels = NULL) +
+  theme(axis.ticks.x = element_blank(),
+        plot.background = element_rect(fill = 'white')) +
+  guides(fill = guide_legend(title = legend))
+
+}
+
+### Helper function for base Pie graph. Generally,
+### I think that bar plots are usually better for viewing
+### breakouts of discrete categories, but in a few instances,
+### I do think that showing one category takes upp the majority
+### of the space can be beneficial
+makeFormatPie <- function(data, demo, legend) {
+  
+  ### forces value to be a factor, rather than numeric
+  data[, demo] <- factor(data[, demo])
+  
+  ### Corrects data so it can have percentage labels
+  data <- data %>% 
+    group_by_at(vars(demo)) %>% 
+    count() %>% 
+    ungroup() %>%
+    mutate(yPos = sum(n)- (cumsum(n) - (n/2))) %>% 
+    mutate(labels = paste0(digits(n  * 100 / sum(.$n), digits = 1), '%'))
+  
+  ### Returns formatted pie plot
+  ggplot(data = data, aes_string(x = factor(1),
+                                 y = 'n',
+                                 fill = demo
+                                 )) +
+  geom_bar(stat = 'identity', width = 1) +
+  geom_text(aes(x = 1.1, y = yPos, label = labels)) +
+  coord_polar(theta = 'y') +
+  theme_void() +
+  guides(fill = guide_legend(title = legend))
+  
+}
+
+  
+```
+
+## Overview
+
+There are several pieces of demographic information that we are able to link back, systemwide, to our customers and their transactions. Since our goal is to isolate the trends of those who purchase our bicycles, only purchases that were in the **Bike** category are included. It is also worth note that these are system-wide trends for all regions, so there may be differences in what is effective in the Canadian market specifically.
+
+The demographics that we are able to analyze are the following:
+
+* Age
+* Marital Status
+* Gender
+* Income
+* Total Children
+* Number of Children at Home
+* Education
+* Occupation
+* Home Owner
+
+## Age, Gender, and Life Style
+
+The average age for our bicycle purchasers is `r digits(mean(bikeDemo$Age), digits = 1)` years, with the majority of our customers falling between the ages of `r digits(mean(bikeDemo$Age) - sd(bikeDemo$Age), digits = 1)` and `r digits(mean(bikeDemo$Age) + sd(bikeDemo$Age), digits = 1)`.
+
+``` {r echo = FALSE, message = FALSE, fig.height = 3}
+
+makeFormatHistogram(bikeDemo, 'Age', breaks = 10, 'Age')
+
+```
+
+Of our bike purchasers, `r paste0(digits(mean(bikeDemo$Parent) * 100, digits = 1), '%')` are parents. However, the majority of our Bike consumers do not have children living at home (`r paste0(digits((1 - mean(bikeDemo$ChildAtHome)) * 100, digits = 1), '%')`), largely due to the average age and parental status of the purchasers. 
+
+``` {r echo = FALSE, message = FALSE, fig.height = 2}
+
+makeFormatPie(bikeDemo, 'IsParent', 'Is Parent')
+
+```
+
+``` {r echo = FALSE, message = FALSE, fig.height = 3}
+
+makeFormatBar(bikeDemo, 'NumberChildrenAtHome', '# Children At Home')
+
+```
+
+Of our Bicycle Consumers, there is not a distinct difference in Marital Status or Gender, with the proportion of each being relatively evenly divided.
+
+``` {r echo = FALSE, message = FALSE, fig.height = 2}
+
+grid.arrange(makeFormatPie(bikeDemo, 'MaritalStatus', 'Marital Status'), makeFormatPie(bikeDemo, 'Gender', 'Gender'), ncol = 2)
+
+```
+
+## Education and Income
+
+There is certainly a range of income earners, but the median income earner for a Bicycle purchaser is `r paste0('$', comma(median(bikeDemo$YearlyIncome), digits = 2))`. In addition, the bottom 25% of our Bike customers make a yearly income of `r paste0('$', comma(summary(bikeDemo$YearlyIncome)[2], digits = 2))` a year or less, and the top 25% make `r paste0('$', comma(summary(bikeDemo$YearlyIncome)[5], digits = 2))` a year or more. 
+
+``` {r echo = FALSE, message = FALSE, fig.height = 3}
+
+makeFormatHistogram(bikeDemo, 'YearlyIncome', breaks = 10, 'Annual Income') +
+  scale_x_continuous(labels = costFormatLabel) 
+
+```
+
+Additionally, the majority of Bicycle customers have completed some level of education, but the most prominant education status of our consumers is '`r statisticalMode(bikeDemo$EnglishEducation)`'. There is also not an occupation category that is necessarily prominant, but the most common Occupation category of our Bicycle consumers is '`r statisticalMode(bikeDemo$EnglishOccupation)`'
+
+``` {r echo = FALSE, message = FALSE, fig.height = 3}
+
+makeFormatBar(bikeDemo, 'EnglishEducation', 'Education')
+makeFormatBar(bikeDemo, 'EnglishOccupation', 'Occupation')
+
+```
+
+## Living and Traveling
+
+The majority of our Bike purchasers are home owners (`r paste0(digits(mean(bikeDemo$HomeOwner) * 100, digits = 1), '%')`), own at least 1 vehicle (`r paste0(digits(mean(bikeDemo$HasCar) * 100, digits = 1), '%')`), and have a 5 mile or less commute to work (`r paste0(digits(mean(bikeDemo$ShortTravel) * 100, digits = 1), '%')`). This implies that most of our customers do not rent, nor are not usually using the bikes as a mode of transportation to places of work far away. 
+
+``` {r echo = FALSE, message = FALSE, fig.height = 3}
+
+grid.arrange(makeFormatPie(bikeDemo, 'HouseOwnerFlag', 'Home Owner'), makeFormatPie(bikeDemo, 'CarOwner', 'Car Owner'), makeFormatPie(bikeDemo, 'ShortCommute', '5 Mile or Less Commute'), ncol = 2)
+
+makeFormatBar(bikeDemo, 'NumberCarsOwned', '# Cars Owned')
+makeFormatBar(bikeDemo, 'CommuteDistance', 'Commute Distance')
+
+```
+
+## Conclusion
+
+If the Canadian market follows the same trends as system wide purchases, we can make a few suggestions for promotions:
+
+* Bikes are not preferentially demanded after by men or women, so having gender-specific promotions would likely not be effective
+
+* There is no clear divide amongst individuals with varying levels of educational achievement, nor occupation category
+  + Individuals that did not complete High School generally do not purchase our Bikes, however, so targeting this group would not be advised
+  + While there is no over dominating group of Bicycle purchasers in terms of occupation, those who have occupations in Professional or Skilled Manual are the most represented groups
+
+* With a median income of `r paste0('$', comma(median(bikeDemo$YearlyIncome), digits = 2))` and half of our consumers making between `r paste0('$', comma(summary(bikeDemo$YearlyIncome)[2], digits = 2))` and `r paste0('$', comma(summary(bikeDemo$YearlyIncome)[5], digits = 2))` a year, it appears that the majority of our consumers live a middle-class lifestyle, and promotions should be targeted as such
+
+* With the average age of our customer being `r digits(mean(bikeDemo$Age), digits = 1)` years old, with most others between the ages `r digits(mean(bikeDemo$Age) - sd(bikeDemo$Age), digits = 1)` and `r digits(mean(bikeDemo$Age) + sd(bikeDemo$Age), digits = 1)`, we should make sure that our promotions are not targeted to an audience that is too young or too old
+
+* The majority of our consumers own at least 1 car, likely meaning that purchasers are not using a bicycle as their primary means of transportation. There still is a significant group of those that do not own a car, but it would still be advisable to focus on the driving population that use our bikes recreationally
+
+* Our bicycle purchasers are primarily homeowners with a commute 5 miles or less. While there are still significant group of individuals that rent, this trend seems to imply that many of our purchasers are likely individuals living in suburban homes, not too far from their jobs. This idea is also further supported given the age, incomes, and education levels of our average purchaser, and these are the main individuals who should be targeted

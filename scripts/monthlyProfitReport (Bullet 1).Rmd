@@ -1,0 +1,305 @@
+---
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+options(tinytex.verbose = TRUE)
+
+### Install the following packages, if not currently installed
+# install.packages("dplyr")
+# install.packages('stringr')
+# install.packages("ggplot2")
+# install.packages('flextable')
+# install.packages("officer")
+# install.packages("openxlsx")
+# install.packages("formattable")
+# install.packages("rmarkdown")
+# install.packages('stringr')
+
+### Loads Relevant packages
+library(dplyr)
+library(ggplot2)
+library(formattable)
+library(rmarkdown)
+library(stringr)
+
+### Essentially, working directory sits in the script folder. All data sits in adjacent folder 
+### and the desired directory needs to be set to the data folder as a result
+base_dir <- gsub('scripts$', 'data', getwd())
+
+### Reads in all provided csv files to be loaded globally. Customer dataset was 
+### not utilized in this analysis.
+# customer <- read.csv('~/Desktop/Veyo/Customer.csv', stringsAsFactors = F)
+productSubCategory <- read.csv(paste0(base_dir, '/ProductSubcategory.csv'), stringsAsFactors = F)
+date <- read.csv(paste0(base_dir, '/Date.csv'), stringsAsFactors = F)
+geography <- read.csv(paste0(base_dir, '/Geography.csv'), stringsAsFactors = F)
+product <- read.csv(paste0(base_dir, '/Product.csv'), stringsAsFactors = F)
+productCategory <- read.csv(paste0(base_dir, '/ProductCategory.csv'), stringsAsFactors = F)
+salesTerritory <- read.csv(paste0(base_dir, '/SalesTerritory.csv'), stringsAsFactors = F)
+factInternetSales <- read.csv(paste0(base_dir, '/FactInternetSales.csv'), stringsAsFactors = F)
+
+```
+
+``` {r echo = FALSE, message = FALSE}
+
+### Many of these frames are isolated, as I recognize that 
+### aggregate requests like these can often lead into other questions,
+### and I like being able to go back and view relevant data structures,
+### when necessary, or if there are follow up requests
+
+### Per prompt, the universal date is associated with OrderDate
+salesDate <- left_join(factInternetSales, date, by = c('OrderDateKey' = 'DateKey'))
+
+### Gets the product data for the current year
+currentProductData <- salesDate %>% 
+  filter(MonthNumberOfYear %in% 1:6 & CalendarYear == 2008) %>% 
+  left_join(product, by = 'ProductKey')
+
+### Gets ProductSubcategory Data
+currentSubCategoryData <- currentProductData %>%
+  left_join(productSubCategory, by = 'ProductSubcategoryKey')
+
+### Summary of SubCategory Profits
+currentSubCategory <- currentSubCategoryData %>%
+  group_by(EnglishProductSubcategoryName) %>%
+  summarise(Profit = sum(SalesAmount - TotalProductCost - Freight - TaxAmt)) %>% 
+  ungroup() %>% 
+  arrange(-Profit)
+
+### Gets totals of Current category summary
+currentCategory <- currentSubCategoryData %>% 
+  left_join(productCategory, by = 'ProductCategoryKey') %>% 
+  group_by(EnglishProductCategoryName) %>% 
+  summarise(Profit = sum(SalesAmount - TotalProductCost - Freight - TaxAmt)) %>% 
+  ungroup() %>% 
+  arrange(-Profit)
+
+### Gets prior year product information
+priorProductData <- salesDate %>% 
+  filter(MonthNumberOfYear %in% 1:6 & CalendarYear == 2007) %>% 
+  left_join(product, by = 'ProductKey')
+
+### Gets Prior year subcategory Data
+priorSubCategoryData <- priorProductData %>%
+  left_join(productSubCategory, by = 'ProductSubcategoryKey')
+
+### Gets Prior year subcategory profit summaries
+priorSubCategory <- priorSubCategoryData %>%
+  group_by(EnglishProductSubcategoryName) %>%
+  summarise(Profit = sum(SalesAmount - TotalProductCost - Freight - TaxAmt))
+   
+### Gets Prior year category profit summaries
+priorCategory <- priorSubCategoryData %>% 
+  left_join(productCategory, by = 'ProductCategoryKey') %>% 
+  group_by(EnglishProductCategoryName) %>% 
+  summarise(Profit = sum(SalesAmount - TotalProductCost - Freight - TaxAmt))
+
+### Calculates total current Bike profit ONLY
+currentBikeProfit <- currentCategory %>% 
+  filter(EnglishProductCategoryName == 'Bikes') %>% 
+  .$Profit %>% 
+  sum()
+
+### Calculates total current Accessory profit ONLY
+currentAccessoryProfit <- currentCategory %>% 
+  filter(EnglishProductCategoryName == 'Accessories') %>% 
+  .$Profit %>% 
+  sum()
+
+### Calculates total current Clothing profit ONLY
+currentClothingProfit <- currentCategory %>% 
+  filter(EnglishProductCategoryName == 'Clothing') %>% 
+  .$Profit %>% 
+  sum()
+
+### Calculates prior year bike profit ONLY
+priorBikeProfit <- priorCategory %>% 
+  filter(EnglishProductCategoryName == 'Bikes') %>% 
+  .$Profit %>% 
+  sum()
+
+### Goal is to know the change in month over month for the FiscalYear. Once the
+### Months by Fiscal year have been grouped, we will filter the relevant data for
+### the year over year comparison, add a Period column, and have an adjusted month
+### column that orders the months chronologically for easier plotting
+monthlyRevenueSixMonth <- salesDate %>% 
+  group_by(MonthNumberOfYear, CalendarYear) %>% 
+  summarise(Profit = sum(SalesAmount - TotalProductCost - Freight - TaxAmt)) %>% 
+  arrange(CalendarYear, MonthNumberOfYear) %>% 
+  filter(MonthNumberOfYear %in% 1:6) %>% 
+  mutate('Period' = case_when(CalendarYear == 2008 ~ 'July 2007 - June 2008',
+                              CalendarYear == 2007 ~ 'July 2006 - June 2007',
+                              CalendarYear == 2006 ~ 'July 2005 - June 2006')) %>% 
+  ungroup() %>% 
+  mutate(Month = factor(month.abb[MonthNumberOfYear], levels = c(month.abb[7:12], month.abb[1:6])))
+
+### Isolates current year monthly profit, adds summary row
+monthlyProfitCurrent <- monthlyRevenueSixMonth %>% 
+  filter(CalendarYear == 2008) %>% 
+  select(Month, Profit) %>% 
+  rename(Current = Profit) %>% 
+  do(bind_rows(., data.frame(Month = 'All', Current = sum(.$Current))))
+
+### Isolates prior year monthly profit, adds summary row
+monthlyProfitPrior <- monthlyRevenueSixMonth %>% 
+  filter(CalendarYear == 2007) %>% 
+  select(Month, Profit) %>% 
+  rename(Prior = Profit) %>% 
+  do(bind_rows(., data.frame(Month = 'All', Prior = sum(.$Prior))))
+
+### Gets comparative profit columns
+monthlyProfitCompare <- left_join(monthlyProfitPrior, monthlyProfitCurrent, by = 'Month') %>% 
+  mutate(Diff = Current - Prior) %>% 
+  mutate('% Change' = paste0(digits(Diff * 100 / Prior, digits = 1), '%'))
+
+### Formats numeric costs to be dollar values
+monthlyProfitCompare[, 2:4] <- lapply(monthlyProfitCompare[, 2:4], FUN = function(x) paste0('$', comma(x, digits = 2)))
+
+### Calculates total Current Profit
+totalCurrentProfit <- monthlyRevenueSixMonth %>% 
+  filter(CalendarYear == 2008) %>% 
+  .$Profit %>% 
+  sum()
+
+### Calculates total prior profit
+totalPriorProfit <- monthlyRevenueSixMonth %>% 
+  filter(CalendarYear == 2007) %>% 
+  .$Profit %>% 
+  sum()
+
+### Calculates total original profit
+totalOriginalProfit <- monthlyRevenueSixMonth %>% 
+  filter(CalendarYear == 2006) %>% 
+  .$Profit %>% 
+  sum()
+
+### The revenue will need to be shown in easier dollars, and this function
+### changes the y-labels while still giving the numerical class to the Revenue
+### column, for easier computing
+revenueLabel <- function(x) paste0('$', comma(x, digits = 0))
+profitToText <- function(x) paste0('$', comma(x, digits = 2))
+
+### Creates a line graph, grouped by the period. Adds points for
+### better clarity, adjusts the labels to be more readable, and 
+### makes the plot theme minimal to be able to visualize the changes
+### without being distracting
+monthlyRevenueLineSixMonth <- ggplot(monthlyRevenueSixMonth, aes(x = Month,
+                                                                 y = Profit,
+                                                                 group = Period,
+                                                                 color = Period)) +
+  geom_line(size = 1) +
+  geom_point() +
+  ylab('Profit (US Dollars)') +
+  scale_y_continuous(labels = revenueLabel) +
+  theme(panel.background = element_rect(fill = NULL, color = 'black'))
+
+```
+
+## Monthly Profits Year Over Year
+
+Total profits January 2008 - June 2008: **`r profitToText(totalCurrentProfit)`** 
+
+Total profits January 2007 - June 2007: **`r profitToText(totalPriorProfit)`**
+
+Total profits January 2006 - June 2006: **`r profitToText(totalOriginalProfit)`**
+
+``` {r echo = FALSE, message = FALSE}
+return(monthlyRevenueLineSixMonth)
+
+return(knitr::kable(monthlyProfitCompare))
+```
+
+Our data indicates that profits are up year over year for all months of the 2008 calendar year. Bikes are our most profitable market, netting `r profitToText(currentBikeProfit)` of profit between January 2008 and June 2008. Bikes netted a profit of `r profitToText(priorBikeProfit)` from Jan 2007 through June 2007, and was our only sales market.
+
+Part of what aided the increase in Bikes YOY was the introduction of a new subcategory, *Touring Bikes*. *Mountain Bikes*, however, are still our most profitable bike type.
+
+Additionally, we've expanded our markets into both *Accessories* (netting `r profitToText(currentAccessoryProfit)` in profit in 2008), and *Clothing* (netting `r profitToText(currentClothingProfit)` in profit in 2008). 
+
+``` {r echo = FALSE, message = FALSE}
+
+### Gets the territory level information
+territoryKeys <- geography %>% 
+  select(SalesTerritoryKey, EnglishCountryRegionName) %>% 
+  unique()
+
+### Combines sales with territory
+geoSales <- left_join(salesDate, territoryKeys, by = 'SalesTerritoryKey')
+
+### Gets relevent columns for plotting, filters the relveant time periods, 
+### and summarises the profits.
+geoSalesAggregate <- geoSales %>% 
+  select(EnglishCountryRegionName, CalendarYear, MonthNumberOfYear, SalesAmount, TotalProductCost, Freight, TaxAmt) %>% 
+  filter(CalendarYear %in% c(2007, 2008)) %>% 
+  filter(MonthNumberOfYear %in% 1:6) %>% 
+  group_by(EnglishCountryRegionName, CalendarYear) %>% 
+  summarise(Profit = sum(SalesAmount - TotalProductCost - Freight - TaxAmt))%>% 
+  ungroup() %>% 
+  rename(Country = EnglishCountryRegionName) %>% 
+  mutate(Title = ifelse(CalendarYear == 2007, 'Jan 2007 - June 2007', 'Jan 2008 - June 2008'))
+
+### Isolates the current sales, adds a summary row
+geoTotalsCurrent <- geoSales %>% 
+  select(EnglishCountryRegionName, CalendarYear, MonthNumberOfYear, SalesAmount, TotalProductCost, Freight, TaxAmt) %>% 
+  filter(CalendarYear == 2008) %>% 
+  filter(MonthNumberOfYear %in% 1:6) %>% 
+  group_by(EnglishCountryRegionName, CalendarYear) %>% 
+  summarise(Current = sum(SalesAmount - TotalProductCost - Freight - TaxAmt))%>% 
+  ungroup() %>% 
+  select(-CalendarYear) %>% 
+  do(bind_rows(., data.frame(EnglishCountryRegionName = 'All', Current = sum(.$Current))))
+
+### Isolates the prior sales, adds a summary row
+geoTotalsPrior <- geoSales %>% 
+  select(EnglishCountryRegionName, CalendarYear, MonthNumberOfYear, SalesAmount, TotalProductCost, Freight, TaxAmt) %>% 
+  filter(CalendarYear == 2007) %>% 
+  filter(MonthNumberOfYear %in% 1:6) %>%
+  group_by(EnglishCountryRegionName, CalendarYear) %>% 
+  summarise(Prior = sum(SalesAmount - TotalProductCost - Freight - TaxAmt)) %>% 
+  ungroup() %>% 
+  select(-CalendarYear) 
+
+### Gets comparative metrics and cleans up some column names
+geoTotalsCompare = left_join(geoTotalsPrior, geoTotalsCurrent, by = c('EnglishCountryRegionName')) %>% 
+  mutate(Diff = Current - Prior) %>% 
+  arrange(-Current) %>% 
+  mutate('Change' = paste0(digits(Diff * 100 / Prior, digits = 1), '%')) %>% 
+  rename('Country' = EnglishCountryRegionName) %>% 
+  do(bind_rows(., data.frame(Country = 'All',
+                             Prior = sum(.$Prior),
+                             Current = sum(.$Current),
+                             Diff = sum(.$Current) - sum(.$Prior),
+                             Change = paste0(digits((sum(.$Current) - sum(.$Prior)) * 100 / sum(.$Prior), digits = 1), '%')))) %>% 
+  rename('% Change' = Change)
+
+### Changes numerics to formated costs
+geoTotalsCompare[, 2:4] <- lapply(geoTotalsCompare[, 2:4], FUN = function(x) paste0('$', comma(x, digits = 2)))
+
+```
+
+## Regional Changes
+
+There were fair amount of regional differences that also contributed to increased profits YOY. Most notably, Australia used to be the most profitable region, but currently, our most profitable region is the United States: 
+
+``` {r echo = F, message = F}
+geoBarFacet <- ggplot(geoSalesAggregate, aes(x = Country,
+                                             y = Profit,
+                                             color = Country, 
+                                             fill = Country)) +
+  geom_bar(stat = 'identity') +
+    scale_x_discrete(labels = NULL) +
+  scale_y_continuous(labels = revenueLabel) +
+  ylab('Profit (US Dollars)') +
+  theme(axis.ticks.x = element_blank(),
+        plot.background = element_rect(fill = 'white')) +
+  facet_wrap(~ Title) +
+  ggtitle('Profit By Country')
+  
+
+return(geoBarFacet)
+
+return(knitr::kable(geoTotalsCompare))
+
+```
+
+Every Region has seen significant year over year increases, with even less profitable regions being more profittable in January 2008 - June 2008 than some of our highest performing regions in January 2007 - June 2007.

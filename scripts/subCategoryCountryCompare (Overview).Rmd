@@ -1,0 +1,49 @@
+---
+title: "Canada SubCategory Compare"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# Canada Compare
+
+The system is quite large, and cross comparing all  product subcategories by every region will lead to any visualization losing any meaningful insight. However, we still want to be able to provide the Canada manager with the insights they need, so the solution is to make this dynamic. This is facilitated via a `Shiny` application that allows for any user to select the desired subcategory / subcategories needed. 
+
+## Caveats
+
+The main request is to exclude the `Bike` category, nothing in relation to this category will be included. An accessory, such as `Bike Stands`, however, will still be selectable for comparison. In addition, there are several subCategories that did not have any transactions take place, so they will be excluded from the selection bar as well. Furthermore, it was noticable that other regions made the Canada region look worse by comparison, notably the United States. This comparsison may be unfair, however, as the United States market is larger than that of the Canada Region. Since some regions might not be the best for comparison to the Canada market, `Country` is also selectable. 
+
+Finally, the other request was to see the trends of each subCategory month over month. *Year over Year trends are not available because Bikes was the only Category available in Jan 2007 - June 2007.* 
+
+Since this display is more piece-wise, there is no strong analysis to be made, since it is not immediately clear which of the SubCategories the manager is interested in. However, this tradeoff comes at the Manager having immediate insight to see all SubCategories of interest.
+
+## Set-Up
+
+For the app to be functional, I've outlined the packages used, with the `install.packages()` functions commented. The app should  work as long as one's settings are up to date, but for clarification, here are my specific settings:
+
+* OS: `r Sys.info()['sysname']`
+* OS Version: `r Sys.info()['version']`
+* R Version: `r R.version.string`
+* Package Versions:
+  + `shiny` => `r packageVersion("shiny")`
+  + `shinyWidgets` => `r packageVersion("shinyWidgets")`
+  + `shinydashboard` => `r packageVersion("shinydashboard")`
+  + `dplyr` => `r packageVersion("dplyr")`
+  + `ggplot2` => `r packageVersion("ggplot2")`
+  + `DT` => `r packageVersion("DT")`
+  + `reshape2` => `r packageVersion("reshape2")`
+  + `formattable` => `r packageVersion("formattable")`
+  + `rmarkdown` => `r packageVersion("rmarkdown")`
+  + `stringr` => `r packageVersion("stringr")`
+
+The program reads in the csv files as named in the original packaged in the provided `.zip`. file. As long as those files lie in the same directory as the `canadaCategoryCompare.R` script, then it should be able to load all the data. From here, simply load the script in Rstudio.
+
+## Usage
+
+To use, simply select a sub category and any region. If no sub categories are selected, the program will prompt you for one. If multiple subcategories are collected, they will be *combined* (ie selecting `Bike Rack` and `Bike Stands` get the total revenue for both, for each month, by Country). If no countries are selected, it will default to `All` and if `All` is ever selected, every country will be selected. Once desired Subcategories and Countries are selected, click `Get Comparison`.
+
+A comparative line plot will come out, showing monthly revenues for the selected subCategory, by Country. Additionally, a table will display underneath showing the monetary revenue, by month, for each country.
+
+The title of the graph will always be updated with the Sub Category / SubCategories selected (though multiple will be separated by commas). While the request is for the Canada dealer, I did not convert the US dollar to the Canadian dollar, since there is the functionality of comparing to other countries. However, since this request is for the Canadian Manager, I've fixed the output of the graph to show an `Orange` line for Canada, and `Blue` for every other country. Countries will still be uniquely identifiable by the shape of their dots. Additionally, the monthly data table will have the Canadian region's monthly totals highlighted in `Yellow`.
